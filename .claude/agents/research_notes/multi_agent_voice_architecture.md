@@ -1,71 +1,36 @@
 # Research Note: Multi-Agent Voice Architecture
 
-## Summary
+## Status
 
-Research validates the Supervisor → Sub-Agent pattern but recommends replacing the LLM-based supervisor with an embedding-based semantic router (~10ms) to eliminate 400-850ms of latency. Pipecat Flows provides the best implementation primitive. Tool isolation must be enforced at code level — prompt-level restrictions fail ~70% of the time.
+- Supporting note
+- Last reviewed: March 22, 2026
+- Decision impact: agent runtime, routing, and handoff design
 
-## Key Findings
+## Safe Assumptions
 
-### Supervisor Pattern — Use Semantic Router, NOT LLM
+- Domain isolation should be enforced in code through per-agent tool allowlists.
+- Routing should avoid an extra full LLM call on every turn when a deterministic or embedding-based path is good enough.
+- Handoffs should transfer summarized state, not the full raw conversation every time.
 
-- **Embedding router** (e.g., aurelio-labs/semantic-router): ~10ms, 92-96% accuracy
-- **Fine-tuned BERT classifier**: 10-20ms, 95-98% accuracy
-- **GPT-4o-mini**: 400-650ms TTFT — too slow for every turn
-- **Claude Haiku 4.5**: 637ms median TTFT — too slow for every turn
-- **Recommendation:** Cascading approach: keyword filter → embedding router → LLM fallback only for ambiguous
+## Working Architecture Shape
 
-### Supervisor Frequency — NOT Every Turn
+- router picks the active domain
+- each domain agent owns its own prompt and tools
+- handoffs carry compact state and summaries
+- risky session state lives outside model context
 
-- First turn: Run supervisor to classify initial intent
-- Subsequent turns: Route directly to active sub-agent
-- Re-invoke supervisor ONLY when user signals topic change (keyword/embedding distance check)
-- This eliminates supervisor latency from 90%+ of turns
+## What Still Needs Project Testing
 
-### Context Passing Between Agents
+- how accurate the first-turn router is on real Egyptian call-center data
+- when topic change should trigger re-routing
+- how much context can be removed before user experience degrades
 
-- Best strategy: RESET_WITH_SUMMARY on agent switches + structured state dictionary
-- From Vapi Squads: Transfer only user/assistant messages, filter out system/tool messages
-- Sparse follow-ups ("yes", "ok") should stay with current agent
+## Architectural Implication
 
-### Latency Analysis (Two-LLM-Call Problem)
-
-- Sequential supervisor + sub-agent: 1000-2150ms — unacceptable
-- With embedding router + streaming: ~900-1260ms first turn, ~800-1050ms subsequent
-- Mitigations: prefix caching (-200-400ms), filler phrases, streaming overlap
-
-### Tool Isolation — Code-Level ONLY
-
-- AGENTIF Benchmark: LLMs follow fewer than 30% of complex constraint instructions
-- "Control Illusion" paper: prompt-level instruction hierarchy fundamentally unreliable
-- Answer.AI: LLMs hallucinate tool calls to tools not provided to them
-- **Must enforce tool whitelists in code** via Pipecat Flows per-node tool definitions
-
-### Pipecat Flows Implementation
-
-- Each node = agent with own role_messages, task_messages, functions, context_strategy
-- Transitions via function handlers returning next node config
-- Global state dictionary persists across transitions
-- LLMSwitcher for runtime provider switching (OpenAI/Google only, not Anthropic)
-
-### Claude vs GPT for Voice
-
-- Claude Sonnet 4.6: 100% accuracy on voice benchmark, 850ms TTFT, top-3 function calling
-- BUT: Arabic support is "basic MSA" — weakest major LLM for Arabic
-- GPT-4o: Better Arabic but voice output "largely incomprehensible" for dialects
-- Gemini: Best Arabic dialect support (16+ dialects) but less mature voice pipeline
-
-### Recommended Architecture
-
-Hybrid State Machine + Embedding Router:
-
-1. Model core flows as Pipecat Flows graph (deterministic transitions)
-2. Embedding router for initial intent classification (~10ms)
-3. LLM fallback (Haiku) only for ambiguous intents
-4. Each node has own system prompt + tool set (code-level isolation)
+- prioritize `P3.1` and `P3.2` before pipeline assembly
+- avoid a monolithic all-tools agent
 
 ## Sources
 
-- Vapi Squads (240K calls/day), Retell AI, OpenAI Agents SDK
-- Microsoft Azure AI Agent Orchestration Patterns
-- OWASP AI Agent Security Cheat Sheet
-- Berkeley Function Calling Leaderboard V4
+- Pipecat flows documentation
+- internal architecture decisions in `PROMPT.md`
